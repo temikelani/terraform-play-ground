@@ -1,0 +1,155 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Cloud Academy IDE Lab Platform"
+
+Parameters:
+  VpcId:
+    Type: String
+    Default: "vpc-0f0e69538bfba6420"
+    Description: The ID of the default VPC.
+
+  SubnetId:
+    Type: String
+    Default: "subnet-0049647495578d09b"
+    Description: The ID of the first subnet in the default VPC
+
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instances
+    Default: "948533770478"
+    Type: AWS::EC2::KeyPair::KeyName
+
+  EC2InstanceType:
+    Description: EC2 instance type for the SSH Lab Mgmt instance
+    Type: String
+    Default: t3.small
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
+    ConstraintDescription: Must be a valid EC2 instance type
+
+  EC2ImageId:
+    Type: AWS::EC2::Image::Id
+    Default: ami-0528a5175983e7f28
+    Description: Amazon Linux 2
+
+  EC2ImageIdWindows:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base
+    Description: Windows Server 2019
+
+Resources:
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Cluster communication with worker nodes
+      VpcId: !Ref VpcId
+
+  Ec2InstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: /
+      Roles:
+        - !Ref Ec2Role
+
+  Ec2Role:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+
+  EC2InstanceLinux:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: EC2InstanceType
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Ref: EC2ImageId
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: "20"
+            DeleteOnTermination: "true"
+            Encrypted: "true"
+      Tags:
+        - Key: Name
+          Value: "Linux"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - Ref: EC2SecurityGroup
+          SubnetId:
+            Ref: SubnetId
+      UserData: !Base64
+        "Fn::Join":
+          - ""
+          - - |
+              #!/bin/bash -xe
+            - |
+              motd_path="/etc/update-motd.d/80-cloudacademy"
+            - >
+              echo "echo \"You have logged into the CloudAcademy EC2 instance\""
+              | sudo tee "$motd_path" && sudo chmod +x "$motd_path" && sudo
+              update-motd
+            - >
+              mkdir -p /home/ec2-user/.aws && echo -e "[default]\nregion =
+              us-west-2" > /home/ec2-user/.aws/credentials && chmod -R a+r
+              /home/ec2-user/.aws
+            - >
+              sudo yum install ec2-instance-connect python3 python3-devel
+              snappy-devel gcc-c++ jq -y
+            - >
+              echo "ClientAliveInterval 60" >> /etc/ssh/sshd_config && systemctl
+              restart sshd.service
+
+  EC2InstanceWindows:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType:
+        Ref: EC2InstanceType
+      KeyName:
+        Ref: KeyName
+      ImageId:
+        Ref: EC2ImageIdWindows
+      IamInstanceProfile: !Ref Ec2InstanceProfile
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            VolumeSize: "32"
+            DeleteOnTermination: "true"
+            Encrypted: "true"
+      Tags:
+        - Key: Name
+          Value: "Windows"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - Ref: EC2SecurityGroup
+          SubnetId:
+            Ref: SubnetId
+
+Outputs:
+  SubnetId:
+    Description: Subnet used in the VPC
+    Value: !Join [",", [!Ref SubnetId]]
+
+  VpcId:
+    Description: The VPC Id
+    Value: !Ref VpcId
